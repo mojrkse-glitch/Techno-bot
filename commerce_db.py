@@ -142,7 +142,7 @@ def approve_invoice(token, uid, stars, currency, query_id):
             return row["approval"] == query_id
         if row["product_id"] == "cv":
             other = conn.execute("""SELECT id FROM checkout_orders WHERE user_id=? AND product_id='cv'
-                AND id!=? AND (state IN ('cv_details','cv_work','refund_requested','refunding','refund_unknown')
+                AND id!=? AND (state IN ('cv_details','cv_work','cv_sending','refund_requested','refunding','refund_unknown')
                 OR (state='invoice' AND approval IS NOT NULL AND expires>=?)) LIMIT 1""",
                                  (uid, row["id"], int(time.time()))).fetchone()
             if other:
@@ -227,7 +227,7 @@ def orders(query="", scope="all", page=0, uid=None, days=0):
         "active": " AND state IN ('paid','sending','processing','review','manual','partial','failed')",
         "refund": " AND state IN ('refund_requested','refunding','refund_unknown')",
         "cv": " AND product_id='cv'",
-        "cvopen": " AND product_id='cv' AND state IN ('cv_details','cv_work')", "invoice": " AND state='invoice'",
+        "cvopen": " AND product_id='cv' AND state IN ('cv_details','cv_work','cv_sending')", "invoice": " AND state='invoice'",
         "completed": " AND state='delivered'",
     }
     with transaction() as conn:
@@ -292,7 +292,7 @@ def reply_ticket(oid, actor, message):
 def cv_open(uid):
     with transaction() as conn:
         return conn.execute("""SELECT id FROM checkout_orders WHERE user_id=? AND product_id='cv'
-           AND state IN ('cv_details','cv_work','refund_requested','refunding','refund_unknown') LIMIT 1""",
+           AND state IN ('cv_details','cv_work','cv_sending','refund_requested','refunding','refund_unknown') LIMIT 1""",
                             (uid,)).fetchone()
 
 
@@ -311,7 +311,7 @@ def wallet_purchase(uid, pid, name, quantity, amount, cost, body, token, syp_rat
             return None, False
         if pid == "cv":
             pending = conn.execute("""SELECT id FROM checkout_orders WHERE user_id=? AND product_id='cv'
-                AND (state IN ('cv_details','cv_work','refund_requested','refunding','refund_unknown')
+                AND (state IN ('cv_details','cv_work','cv_sending','refund_requested','refunding','refund_unknown')
                 OR (state='invoice' AND approval IS NOT NULL AND expires>=?)) LIMIT 1""", (uid, now)).fetchone()
             if pending:
                 return None, False

@@ -380,6 +380,7 @@ SHOP_STATES = {
     "delivered": ("تم التسليم", "Delivered"),
     "cv_details": ("بانتظار معلومات السيرة", "Awaiting CV details"),
     "cv_work": ("السيرة قيد الإعداد", "CV in progress"),
+    "cv_sending": ("تسليم السيرة قيد التحقق", "CV delivery pending confirmation"),
     "refund_requested": ("طلب الاسترداد مسجّل", "Refund requested"),
     "refunding": ("الاسترداد قيد التنفيذ", "Refund in progress"),
     "refund_unknown": ("الاسترداد بحاجة للتحقق", "Refund awaiting confirmation"),

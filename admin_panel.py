@@ -432,6 +432,11 @@ def handle_text(bot, message, view):
     if not allowed(message.from_user, message.chat):
         return
     action = view["action"]
+    if action == "cv_upload":
+        ops_console.deliver_cv(sys.modules[__name__], bot, message, view)
+        return
+    if not getattr(message, "text", None):
+        return
     if action == "wallet_input":
         wallet_ui.admin_text(sys.modules[__name__], bot, message, view)
         return
