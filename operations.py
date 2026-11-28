@@ -9,7 +9,7 @@ from html import escape
 from urllib.parse import urlsplit
 import time
 import secrets
-from config import ADMIN_ID
+from app_settings import ADMIN_ID
 import database as db
 import commerce_db as store
 import design_studio as design

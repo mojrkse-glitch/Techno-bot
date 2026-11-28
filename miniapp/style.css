@@ -1,0 +1,10 @@
+:root { color-scheme: light dark; font: 16px system-ui, sans-serif; }
+body { margin: 0; background: var(--tg-theme-bg-color, Canvas); color: var(--tg-theme-text-color, CanvasText); }
+main { max-width: 42rem; margin: auto; padding: 1rem; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+form, #fields, fieldset, label { display: grid; gap: .6rem; }
+fieldset { min-width: 0; border: 1px solid GrayText; border-radius: .45rem; }
+input, textarea, select, button { font: inherit; padding: .55rem; }
+textarea { resize: vertical; }
+button { cursor: pointer; }
+#status { min-height: 1.25rem; }

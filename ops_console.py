@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from decimal import Decimal
 from html import escape
@@ -11,6 +12,7 @@ import commerce_db as store
 import database as db
 import cv_delivery
 import cv_intake
+import cv_pipeline
 import suppliers
 from shop_ui import date, label
 
@@ -72,8 +74,34 @@ def card(panel, bot, chat, msg, oid, note=""):
     delivery = cv_delivery.status(oid) if row["product_id"] == "cv" else None
     if row["product_id"] == "cv" and row["paid"] is not None and status in cv_delivery.OPEN_STATES:
         menu.add(panel.button("📎 إرسال CV للزبون", f"cvfile|{oid}"))
-    if cv_intake.submission(oid):
+    pipeline_text = ""
+    missing = cv_pipeline.missing_settings() if row["product_id"] == "cv" else []
+    if missing and status in cv_delivery.OPEN_STATES:
+        pipeline_text += "\nالأتمتة متوقفة بسبب إعدادات ناقصة: " + ", ".join(missing)
+    if row["product_id"] == "cv" and cv_intake.submission(oid):
         menu.add(panel.button("⬇️ تنزيل JSON السيرة", f"cvjson|{oid}"))
+        job = cv_pipeline.status(oid)
+        if job:
+            pipeline_text += "\nالمعالجة: " + cv_pipeline.LABELS[job["stage"]]
+            if job["organized"]:
+                organized = json.loads(job["organized"])
+                if organized["missing"]:
+                    pipeline_text += "\nحقول ناقصة: " + ", ".join(organized["missing"])
+                menu.add(panel.button("⬇️ تنزيل JSON المنظّم", f"cvorganized|{oid}"))
+            if job["error"] == "uncertain":
+                pipeline_text += "\nإرسال Canva غير مؤكد. استعد معرّف المهمة من Supabase قبل أي إعادة إرسال."
+                menu.add(panel.button("مطابقة مهمة Canva", f"cvreconcile|{oid}"))
+            if job["error"] == "retry":
+                pipeline_text += "\nتعذّرت المحاولة. ستُعاد تلقائياً."
+            if job["error"] == "failed":
+                pipeline_text += "\nتوقف بعد المحاولات. راجع إعدادات المرحلة ثم استأنف."
+                menu.add(panel.button("استئناف المعالجة", f"cvresume|{oid}"))
+            if job["stage"] == "ready":
+                menu.add(panel.button("معاينة PDF", f"cvpdf|{oid}"))
+                if status in cv_delivery.OPEN_STATES:
+                    menu.add(panel.button("أرسل PDF للزبون", f"cvsendpdf|{oid}"))
+        elif not missing:
+            pipeline_text = "\nبانتظار عامل المعالجة."
     ticket = store.get_ticket(oid)
     wallet_paid = row["wallet_amount"] is not None
     amount = f"{row['wallet_amount']} USD من المحفظة" if wallet_paid else f"{row['stars']} ⭐"
@@ -85,6 +113,7 @@ def card(panel, bot, chat, msg, oid, note=""):
             f"مرجع {suppliers.supplier_name(row['body'])}: <code>{escape(row['supplier_id'] or '—')}</code>\n"
             f"عرض المورد: {escape(row['quote_usd'] or '—')} USD · الفعلي: {escape(row['actual_usd'] or '—')} USD\n"
             f"سبب الحالة: {escape(row['reason'] or '—')}")
+    text += pipeline_text
     if delivery:
         text += f"\n📎 ملف السيرة: {cv_delivery.LABELS.get(delivery['state'], delivery['state'])}"
     if row["supplier_quantity"] is not None:

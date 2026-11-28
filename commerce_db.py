@@ -54,6 +54,31 @@ def init():
         init_wallet(conn)
         import platform_db
         platform_db.init(conn)
+        import cv_pipeline
+        cv_pipeline.init(conn)
+        migrate_legacy_cv(conn)
+
+
+def migrate_legacy_cv(conn):
+    # Legacy open CV orders already debited the wallet. Move fulfillment only.
+    for row in conn.execute("""SELECT * FROM orders WHERE kind='cv'
+            AND status IN ('awaiting_details','in_progress')""").fetchall():
+        now = int(time.time())
+        cur = conn.execute("""INSERT OR IGNORE INTO checkout_orders
+            (token,user_id,product_id,name,quantity,stars,state,expires,created,updated,paid,wallet_amount)
+            VALUES(?,?,'cv',?,1,0,?,?,?,?,?,?)""",
+            (f"legacy-cv-{row['id']}", row["user_id"], row["product_name"],
+             "cv_work" if row["status"] == "in_progress" else "cv_details",
+             now, now, now, now, row["sell_price"]))
+        conn.execute("UPDATE orders SET status='migrated' WHERE id=?", (row["id"],))
+        if cur.rowcount:
+            audit(conn, "cv_legacy_migration", None, cur.lastrowid, detail=str(row["id"]))
+
+
+def legacy_cv_order(oid, uid):
+    with transaction() as conn:
+        return conn.execute("SELECT * FROM checkout_orders WHERE token=? AND user_id=?",
+                            (f"legacy-cv-{oid}", uid)).fetchone()
 
 
 def audit(conn, action, actor=None, oid=None, old=None, new=None, detail=None):
@@ -190,7 +215,7 @@ def transition(oid, expected, target, actor=None, action="state", **fields):
             import promotions
             promotions.delivered(conn,row)
         if target in ("review","partial","failed"):
-            from config import ADMIN_ID
+            from app_settings import ADMIN_ID
             conn.execute("INSERT OR IGNORE INTO push_queue(uid,kind,ref,unique_key) VALUES(?,'staff',?,?)",
                          (ADMIN_ID,str(oid),f"staff:{oid}:{target}"))
         audit(conn, action, actor, oid, row["state"], target, fields.get("reason"))

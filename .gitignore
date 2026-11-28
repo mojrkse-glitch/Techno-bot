@@ -221,3 +221,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Private runtime settings and customer data
+/config.py
+.env.*
+!.env.example
+/store.db*
+/.cv-private/

@@ -123,7 +123,8 @@ def reconcile(oid, actor):
 def send(bot, oid, actor, file_id, unique_id, name, force=False):
     """يرجع (sent|failed|uncertain|busy|order, تفاصيل)."""
     from locales import t
-    result, owner = claim(oid, actor, file_id, unique_id, name, force)
+    file_ref = file_id if isinstance(file_id, str) else unique_id
+    result, owner = claim(oid, actor, file_ref, unique_id, name, force)
     if result == "sent":
         reconcile(oid, actor)
         return "sent", "already"

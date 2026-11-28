@@ -11,7 +11,6 @@ import secrets
 import sqlite3
 import time
 from datetime import datetime, timezone
-from html import escape
 from io import BytesIO
 from urllib.parse import urlencode, urlsplit
 
@@ -67,7 +66,7 @@ def webapp_url():
     value = os.getenv("CV_WEBAPP_URL", "").strip()
     if not value:
         try:
-            import config
+            import app_settings as config
             value = str(getattr(config, "CV_WEBAPP_URL", "") or "").strip()
         except ImportError:
             value = ""
@@ -78,7 +77,7 @@ def webapp_url():
 def eligible(conn, uid, oid):
     """طلب CV مدفوع، يخص المرسل، بانتظار المعلومات، ولم تُرسل له بيانات من قبل."""
     row = conn.execute("SELECT * FROM checkout_orders WHERE id=?", (oid,)).fetchone()
-    if not row or row["product_id"] != "cv" or row["user_id"] != uid or row["state"] != "cv_details" or row["paid"] is None:
+    if not row or row["product_id"] != "cv" or row["user_id"] != uid or row["state"] not in {"cv_details", "cv_work"} or row["paid"] is None:
         return None
     if conn.execute("SELECT 1 FROM cv_submissions WHERE order_id=?", (oid,)).fetchone():
         return None
@@ -202,7 +201,7 @@ def parse(raw):
     token, lang = data["token"], data["resume_language"]
     if not isinstance(token, str) or not TOKEN_RE.match(token):
         raise Invalid("token")
-    if lang not in LEVELS:
+    if not isinstance(lang, str) or lang not in LEVELS:
         raise Invalid("resume_language")
     return token, lang, validate_cv(data["cvData"], lang)
 
@@ -270,7 +269,7 @@ def offer(bot, uid, chat_id, oid, lang, *, just_paid=False):
         else:
             bot.send_message(chat_id, t(lang, "cv_app_unavailable"))
         return False
-    token = issue_token(uid, oid, reuse=just_paid)
+    token = issue_token(uid, oid, reuse=True)
     if not token:
         if not just_paid:
             bot.send_message(chat_id, t(lang, "cv_app_err_order"))
@@ -280,6 +279,7 @@ def offer(bot, uid, chat_id, oid, lang, *, just_paid=False):
     button = "cv_app_launch" if just_paid else "cv_app_button_short"
     message = "cv_app_paid" if just_paid else "cv_app_open"
     keyboard.add(types.KeyboardButton(t(lang, button), web_app=types.WebAppInfo(url=link)))
+    keyboard.add(types.KeyboardButton(("⬅️ رجوع" if lang == "ar" else "⬅️ Back") + f" · #{oid}"))
     bot.send_message(chat_id, t(lang, message, order_id=oid), reply_markup=keyboard)
     return True
 
@@ -288,7 +288,7 @@ def handle(bot, message):
     """handler الرسائل من نوع web_app_data."""
     from locales import t
     import admin_panel
-    from config import ADMIN_ID
+    from app_settings import ADMIN_ID
     chat, sender = message.chat, message.from_user
     if chat.type != "private" or not sender or sender.id != chat.id:
         return
@@ -308,9 +308,8 @@ def handle(bot, message):
         bot.send_message(chat.id, t(lang, REASONS[reason]), reply_markup=remove)
         return
     bot.send_message(chat.id, t(lang, "cv_app_saved", order_id=oid), reply_markup=remove)
-    name = escape(cv["personal_info"]["full_name"][:60])
     admin_panel.notify(bot, ADMIN_ID, f"📄 وصلت بيانات سيرة ذاتية عبر Mini App · طلب <b>#{oid}</b>\n"
-                       f"{name} · اللغة: {resume_lang}",
+                       f"اللغة: {resume_lang}",
                        reply_markup=admin_panel.menu(admin_panel.button("فتح الطلب", f"opview|{oid}"),
                                                      admin_panel.button("⬇️ تنزيل JSON", f"cvjson|{oid}")))
 

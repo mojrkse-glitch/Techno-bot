@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Techno Pay CV</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="form.js" defer></script>
+</head>
+<body>
+<main>
+  <header><h1>السيرة الذاتية</h1><button type="button" id="back">رجوع</button></header>
+  <form>
+    <label><span id="language-label">لغة السيرة</span>
+      <select id="language"><option value="ar">العربية</option><option value="en">English</option></select>
+    </label>
+    <div id="fields"></div>
+    <p id="status" role="status"></p>
+    <button type="submit" id="submit">إرسال النموذج</button>
+  </form>
+</main>
+</body>
+</html>

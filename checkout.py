@@ -252,6 +252,17 @@ def worker(bot=None):
                 stopped.wait(4)
         Thread(target=notices,name="notifications",daemon=True).start()
         broadcast.start(bot,stopped)
+
+        def cv_jobs():
+            import cv_pipeline
+            while not stopped.is_set():
+                try:
+                    cv_pipeline.tick()
+                except Exception:
+                    LOG.error("CV processing interrupted")
+                stopped.wait(3)
+
+        Thread(target=cv_jobs, name="cv-processing", daemon=True).start()
     return stopped
 
 

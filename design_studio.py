@@ -3,7 +3,7 @@ import time
 import secrets
 from html import escape
 from telebot import types
-from config import ADMIN_ID
+from app_settings import ADMIN_ID
 from database import transaction, get_user
 from commerce_db import settings, set_setting, audit
 from platform_db import rows, write
