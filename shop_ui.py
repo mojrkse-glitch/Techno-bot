@@ -14,6 +14,7 @@ import promotions
 import catalog
 import checkout
 import cv_intake
+import ui_style
 import suppliers
 import commerce_db as store
 import wallet
@@ -313,12 +314,26 @@ def show_order(bot, chat, msg, uid, oid, lang, support_link=None):
     row = store.order(oid)
     if not row or row["user_id"] != uid:
         return
-    markup = menu(button("🔄 " + (ui_text(lang, "shop_ui_refresh_status")), f"star_order|{oid}"),
-                  button(tr(lang, "support"), f"order_help|{oid}"),
-                  button(tr(lang, "stars_orders"), "star_orders|0"))
-    if row["state"]=="delivered" and row["product_id"]!="cv":
-        markup.add(button("🔄 اطلب مجدداً / Reorder",f"x|reorder|{oid}"))
-    markup.add(button("💬 سجل الدعم / Messages",f"x|ticket|{oid}"))
+    ticket = store.get_ticket(oid)
+    cv_open = row["product_id"] == "cv" and row["state"] in {"cv_details", "cv_work"}
+    waiting_details = cv_open and row["state"] == "cv_details" and not cv_intake.submission(oid)
+    cv_form = waiting_details and bool(cv_intake.webapp_url())
+    long_delivery = bool(row["delivery"]) and row["state"] in {"delivered", "partial", "partial_closed"} and len(row["delivery"]) > 1700
+    # الإجراء الأهم أولاً، ثم التحديث والطلبات في صف، ثم الدعم زراً واحداً
+    markup = menu()
+    if cv_form:
+        markup.add(ui_style.styled(button(t(lang, "cv_app_button"), f"cvapp|{oid}"), ui_style.SUCCESS))
+    if row["state"] == "delivered" and row["product_id"] != "cv":
+        markup.add(button("🔄 اطلب مجدداً / Reorder", f"x|reorder|{oid}"))
+    if long_delivery:
+        markup.add(button("🔑 " + (ui_text(lang, "shop_ui_full_delivery")), f"star_delivery|{oid}"))
+    markup.row(button("🔄 " + (ui_text(lang, "shop_ui_refresh_status")), f"star_order|{oid}"),
+               button(tr(lang, "stars_orders"), "star_orders|0"))
+    markup.add(button(tr(lang, "support"), f"order_help|{oid}"))
+    if ticket:
+        markup.add(button("💬 " + ("سجل الدعم" if lang == "ar" else "Support log"), f"x|ticket|{oid}"))
+    if waiting_details and not cv_form:
+        markup.add(types.InlineKeyboardButton(t(lang, "cv_support"), url=support_link or support_url()))
     if row["wallet_amount"] is not None:
         paid_label = f"{row['wallet_amount']} USD"
         if row["wallet_syp_rate"] is not None:
@@ -336,17 +351,13 @@ def show_order(bot, chat, msg, uid, oid, lang, support_link=None):
         text += f"\n{title}: {row['supplier_quantity']}/{row['quantity']}"
     if row["delivery"] and row["state"] in {"delivered", "partial", "partial_closed"}:
         text += f"\n\n<code>{escape(row['delivery'][:1700])}</code>"
-        if len(row["delivery"]) > 1700:
-            markup.add(button("🔑 " + (ui_text(lang, "shop_ui_full_delivery")), f"star_delivery|{oid}"))
-    if row["product_id"] == "cv" and row["state"] in {"cv_details", "cv_work"}:
+    if cv_open:
         text += f"\n\n{tr(lang, 'cv_intro')}"
         if row["state"] == "cv_details":
             if cv_intake.submission(oid):
                 text += f"\n\n{t(lang, 'cv_app_done')}"
-            elif cv_intake.webapp_url():
-                markup.add(button(t(lang, "cv_app_button"), f"cvapp|{oid}"))
-        markup.add(types.InlineKeyboardButton(t(lang, "cv_support"), url=support_link or support_url()))
-    ticket = store.get_ticket(oid)
+            else:
+                text += f"\n{t(lang, 'cv_app_hint' if cv_form else 'cv_app_support_hint')}"
     if ticket and ticket["reply"]:
         text += f"\n\n💬 {escape(ticket['reply'][:700])}"
     render(bot, chat, msg, text, markup)
