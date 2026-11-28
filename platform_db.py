@@ -36,8 +36,10 @@ def init(c):
     }
     for name, fields in tables.items():
         c.execute(f"CREATE TABLE IF NOT EXISTS {name} ({fields})")
+    import cv_delivery
     import cv_intake
     cv_intake.init(c)
+    cv_delivery.init(c)
     for table, name, definition in [
         ("campaigns","confirmation","TEXT"),("users","is_banned","INTEGER DEFAULT 0"),("users","joined_at","INTEGER"),
         ("checkout_orders","discount_base_stars","INTEGER"),("checkout_orders","sale_usd","TEXT"),

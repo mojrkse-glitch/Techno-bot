@@ -4,19 +4,15 @@ from html import escape
 import re
 import time
 
-from telebot import apihelper
-
 import api
 import catalog
 import checkout
 import commerce_db as store
 import database as db
+import cv_delivery
 import cv_intake
 import suppliers
 from shop_ui import date, label
-
-CV_DELIVERY_STATES = ("cv_details", "cv_work")
-CV_DELIVERY_TIMEOUT = 120
 
 SCOPES = {"all": "الطلبات", "active": "مدفوعة قيد المعالجة", "review": "المراجعة", "refund": "الاستردادات",
           "cv": "السيرة الذاتية", "cvopen": "طلبات السيرة المفتوحة", "invoice": "بانتظار الدفع", "completed": "المسلّمة"}
@@ -30,8 +26,7 @@ TRANSITIONS = {
     "manual": "إسناد للمراجعة اليدوية",
     "retry": "الموافقة على إعادة المطابقة مع JRK",
     "cvwork": "بدء إعداد السيرة",
-    "cvreceived": "تأكيد وصول الملف للزبون",
-    "cvretry": "إعادة فتح التسليم بعد التحقق من عدم وصول الملف",
+    "cvsend": "تسليم يدوي خارج البوت مع تسجيل مرجع التسليم",
     "refund": "طلب استرداد النجوم",
     "sendrefund": "تنفيذ استرداد النجوم",
     "partialdone": "إغلاق مراجعة التسليم الجزئي مع حفظ سبب القرار",
@@ -45,7 +40,7 @@ def overview():
         "active": sum(row["state"] in {"paid", "sending", "processing", "review", "manual", "partial", "failed"} for row in paid),
         "review": sum(row["state"] in {"review", "manual", "partial", "failed"} for row in rows),
         "refund": sum(row["state"] in {"refund_requested", "refunding", "refund_unknown"} for row in rows),
-        "cv": sum(row["state"] in (*CV_DELIVERY_STATES, "cv_sending") for row in rows),
+        "cv": sum(row["state"] in {"cv_details", "cv_work"} for row in rows),
     }
 
 
@@ -67,20 +62,18 @@ def listing(panel, bot, chat, msg, scope, days, page, query):
     panel.screen(bot, chat, msg, text, menu)
 
 
-def cv_delivery_needs_review(row):
-    return (row["product_id"] == "cv" and row["state"] == "cv_sending"
-            and (row["reason"] == "cv_delivery_unconfirmed" or row["updated"] <= time.time() - CV_DELIVERY_TIMEOUT))
-
-
 def card(panel, bot, chat, msg, oid, note=""):
     row = store.order(oid)
     menu = panel.menu(panel.button("⬅️ الطلبات", "ops|all|0|0"), panel.button("🔄 تحديث البطاقة", f"opview|{oid}"))
     if not row:
         panel.screen(bot, chat, msg, "الطلب غير موجود.", menu)
         return
+    status = row["state"]
+    delivery = cv_delivery.status(oid) if row["product_id"] == "cv" else None
+    if row["product_id"] == "cv" and row["paid"] is not None and status in cv_delivery.OPEN_STATES:
+        menu.add(panel.button("📎 إرسال CV للزبون", f"cvfile|{oid}"))
     if cv_intake.submission(oid):
         menu.add(panel.button("⬇️ تنزيل JSON السيرة", f"cvjson|{oid}"))
-    status = row["state"]
     ticket = store.get_ticket(oid)
     wallet_paid = row["wallet_amount"] is not None
     amount = f"{row['wallet_amount']} USD من المحفظة" if wallet_paid else f"{row['stars']} ⭐"
@@ -92,6 +85,8 @@ def card(panel, bot, chat, msg, oid, note=""):
             f"مرجع {suppliers.supplier_name(row['body'])}: <code>{escape(row['supplier_id'] or '—')}</code>\n"
             f"عرض المورد: {escape(row['quote_usd'] or '—')} USD · الفعلي: {escape(row['actual_usd'] or '—')} USD\n"
             f"سبب الحالة: {escape(row['reason'] or '—')}")
+    if delivery:
+        text += f"\n📎 ملف السيرة: {cv_delivery.LABELS.get(delivery['state'], delivery['state'])}"
     if row["supplier_quantity"] is not None:
         text += f"\nالكمية المسلّمة حسب المورد: {row['supplier_quantity']}/{row['quantity']}"
     actions = []
@@ -106,11 +101,8 @@ def card(panel, bot, chat, msg, oid, note=""):
             actions.append("partialdone")
         if status == "cv_details":
             actions.append("cvwork")
-        if row["product_id"] == "cv" and status in CV_DELIVERY_STATES:
-            menu.add(panel.button("📎 إرسال CV للزبون", f"cvsend|{oid}"))
-        if cv_delivery_needs_review(row):
-            actions.extend(("cvreceived", "cvretry"))
-            text += "\nتحقّق من وصول الملف مع الزبون قبل اختيار إجراء التسليم."
+        if status == "cv_work":
+            actions.append("cvsend")
         if status in {"cv_details", "cv_work", "failed"} or row["reason"] == "unapproved_invoice":
             actions.append("refund")
         if status == "refund_requested":
@@ -260,17 +252,6 @@ def callback(panel, bot, call, view, action, args):
     elif action == "ophide":
         store.edit_product(args[0], "hidden", args[1] == "1", uid)
         catalog_card(panel, bot, chat, msg, args[0])
-    elif action == "cvsend" or (action == "opconfirm" and args[0] == "cvsend"):
-        oid = int(args[-1])
-        row = store.order(oid)
-        if not row or row["product_id"] != "cv" or row["paid"] is None or row["state"] not in CV_DELIVERY_STATES:
-            card(panel, bot, chat, msg, oid, "الطلب غير متاح لإرسال السيرة.")
-            return
-        view.update(action="cv_upload", cv_order=oid)
-        panel.screen(bot, chat, msg,
-                     f"📎 <b>إرسال السيرة للطلب #{oid}</b>\nالزبون: <code>{row['user_id']}</code>\n"
-                     "أرفق ملف PDF أو Word هنا. سيرسله البوت مباشرةً لصاحب هذا الطلب.",
-                     panel.menu(panel.button("إلغاء", f"opview|{oid}")))
     elif action == "opconfirm":
         task, oid = args
         view.update(action="op_input", op=["reason", task, oid])
@@ -309,52 +290,6 @@ def callback(panel, bot, call, view, action, args):
                 "rate": "أرسل صافي USD التقديري لكل نجمة أو - لإلغاء التسعير المشتق.",
             }[key]
         panel.screen(bot, chat, msg, prompt, panel.menu(panel.button("إلغاء", "home")))
-
-
-def deliver_cv(panel, bot, message, view):
-    oid = view["cv_order"]
-    chat, uid = message.chat.id, message.from_user.id
-    document = getattr(message, "document", None)
-    name = getattr(document, "file_name", None) or ""
-    file_id = getattr(document, "file_id", None)
-    if not file_id or not name.lower().endswith((".pdf", ".doc", ".docx")):
-        bot.send_message(chat, "أرفق السيرة كمستند بصيغة PDF أو Word (.doc أو .docx).")
-        return
-
-    row = store.order(oid)
-    if (not row or row["product_id"] != "cv" or row["state"] not in CV_DELIVERY_STATES
-            or not store.transition(oid, CV_DELIVERY_STATES, "cv_sending", uid, "cv_delivery_started",
-                                    reason=None)):
-        view.pop("action", None)
-        card(panel, bot, chat, None, oid, "الطلب غير متاح لإرسال السيرة.")
-        return
-
-    lang = db.get_user(row["user_id"])["lang"]
-    caption = (f"📄 سيرتك الذاتية جاهزة · طلب #{oid}" if lang == "ar"
-               else f"📄 Your CV is ready · Order #{oid}")
-    try:
-        sent = bot.send_document(row["user_id"], file_id, caption=caption, timeout=30)
-    except apihelper.ApiTelegramException as exc:
-        if 400 <= exc.error_code < 500:
-            store.transition(oid, ("cv_sending",), row["state"], uid, "cv_delivery_rejected", reason=row["reason"])
-            bot.send_message(chat, "تعذّر إرسال الملف للزبون. جرّب إرفاقه مرة ثانية أو اضغط إلغاء.")
-            return
-        sent = None
-    except (apihelper.ApiException, OSError):
-        sent = None
-
-    view.pop("action", None)
-    if sent is None:
-        store.transition(oid, ("cv_sending",), "cv_sending", uid, "cv_delivery_unconfirmed",
-                         reason="cv_delivery_unconfirmed")
-        card(panel, bot, chat, None, oid, "تعذّر التأكد من وصول الملف. تحقّق مع الزبون قبل إعادة الإرسال.")
-        return
-
-    saved = store.transition(oid, ("cv_sending",), "delivered", uid, "cv_file_delivered",
-                             reason=f"Telegram message #{sent.message_id}", delivered=int(time.time()))
-    note = ("تم إرسال ملف السيرة للزبون وتسجيل التسليم." if saved
-            else "أُرسل الملف للزبون. تغيّرت حالة الطلب أثناء الإرسال، راجع البطاقة.")
-    card(panel, bot, chat, None, oid, note)
 
 
 def text_input(panel, bot, message, view):
@@ -457,17 +392,13 @@ def apply(panel, bot, chat, msg, uid, op, value):
             changed = store.transition(oid, ("review",), "manual", uid, reason=value)
         elif task == "cvwork":
             changed = store.transition(oid, ("cv_details",), "cv_work", uid, reason=value)
-        elif task in {"cvreceived", "cvretry"}:
-            row = store.order(oid)
-            if row and cv_delivery_needs_review(row):
-                target = "delivered" if task == "cvreceived" else "cv_work"
-                fields = {"delivered": int(time.time())} if target == "delivered" else {}
-                changed = store.transition(oid, ("cv_sending",), target, uid, reason=value, **fields)
+        elif task == "cvsend":
+            changed = store.transition(oid, ("cv_work",), "delivered", uid, reason=value, delivered=int(time.time()))
         elif task == "partialdone":
             changed = store.transition(oid, ("partial",), "partial_closed", uid, reason=value)
         with db.transaction(write=True) as conn:
             store.audit(conn, f"admin_{task}", uid, oid, detail=value, new="confirmed" if changed else "unchanged")
-        if changed and task in {"cvwork", "refund", "sendrefund"}:
+        if changed and task in {"cvwork", "cvsend", "refund", "sendrefund"}:
             row = store.order(oid)
             lang = db.get_user(row["user_id"])["lang"]
             panel.notify(bot, row["user_id"], f"#{oid} · {label(lang, row['state'])}")

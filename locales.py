@@ -231,6 +231,7 @@ TEXTS["ar"].update({
 TEXTS["ar"].update({
     "cv_app_button": "📝 تعبئة عبر Mini App",
     "cv_app_button_short": "📝 افتح نموذج السيرة",
+    "cv_file_caption": "📎 سيرتك الذاتية جاهزة · طلب #{order_id}",
     "cv_app_launch": "تشغيل Mini App",
     "cv_app_paid": "تم الدفع، اضغط تشغيل Mini App لتعبئة بيانات السيرة",
     "cv_app_paid_receipt": "تم الدفع للطلب #{order_id}.",
@@ -247,6 +248,7 @@ TEXTS["ar"].update({
 TEXTS["en"].update({
     "cv_app_button": "📝 Fill in via Mini App",
     "cv_app_button_short": "📝 Open CV form",
+    "cv_file_caption": "📎 Your CV is ready · order #{order_id}",
     "cv_app_launch": "Launch Mini App",
     "cv_app_paid": "Payment confirmed. Tap Launch Mini App to fill in your CV details.",
     "cv_app_paid_receipt": "Payment confirmed for order #{order_id}.",
@@ -380,7 +382,6 @@ SHOP_STATES = {
     "delivered": ("تم التسليم", "Delivered"),
     "cv_details": ("بانتظار معلومات السيرة", "Awaiting CV details"),
     "cv_work": ("السيرة قيد الإعداد", "CV in progress"),
-    "cv_sending": ("تسليم السيرة قيد التحقق", "CV delivery pending confirmation"),
     "refund_requested": ("طلب الاسترداد مسجّل", "Refund requested"),
     "refunding": ("الاسترداد قيد التنفيذ", "Refund in progress"),
     "refund_unknown": ("الاسترداد بحاجة للتحقق", "Refund awaiting confirmation"),

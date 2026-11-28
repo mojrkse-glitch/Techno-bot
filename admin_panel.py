@@ -10,6 +10,7 @@ import api
 import catalog
 import checkout
 import commerce_db as store
+import cv_delivery
 import cv_intake
 import ops_console
 import suppliers
@@ -344,7 +345,8 @@ def handle_callback(bot, call, states):
     state = states.get(uid, {})
     view = state.copy() if state.get("mode") == "admin" else {"mode": "admin"}
     view.pop("action", None)
-    for key, commit in (("wallet_preview", "w_commit"), ("price_preview", "commit_price"), ("op_preview", "opcommit")):
+    for key, commit in (("wallet_preview", "w_commit"), ("price_preview", "commit_price"), ("op_preview", "opcommit"),
+                        ("cv_file_preview", "cvfilego")):
         if action != commit:
             view.pop(key, None)
     states[uid] = view
@@ -405,6 +407,8 @@ def handle_callback(bot, call, states):
             if not sent:
                 note = "تم تحديث الطلب. تعذّر إرسال إشعار تيليغرام للعميل."
         cv_card(bot, chat_id, msg_id, row, note)
+    elif action in {"cvfile", "cvfilere", "cvfileok", "cvfilego"}:
+        cv_delivery.callback(sys.modules[__name__], bot, call, view, action, args)
     elif action == "cvjson":
         cv_intake.send_json(bot, chat_id, int(args[0]))
     elif action == "sp":
@@ -432,18 +436,16 @@ def handle_text(bot, message, view):
     if not allowed(message.from_user, message.chat):
         return
     action = view["action"]
-    if action == "cv_upload":
-        ops_console.deliver_cv(sys.modules[__name__], bot, message, view)
-        return
-    if not getattr(message, "text", None):
-        return
     if action == "wallet_input":
         wallet_ui.admin_text(sys.modules[__name__], bot, message, view)
         return
     if action == "op_input":
         ops_console.text_input(sys.modules[__name__], bot, message, view)
         return
-    raw = message.text.strip()
+    if action == "cv_file":
+        cv_delivery.admin_file(sys.modules[__name__], bot, message, view)
+        return
+    raw = (message.text or "").strip()
     chat_id = message.chat.id
     if action in {"product_search", "user_search"}:
         if not raw or len(raw) > 80:
