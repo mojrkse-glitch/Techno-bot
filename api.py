@@ -2,6 +2,7 @@ import re
 import logging
 import time
 from decimal import Decimal, ROUND_UP
+from threading import Lock
 
 import requests
 
@@ -9,9 +10,13 @@ import database as db
 import commerce_db
 import suppliers
 
-from config import BRAND_ICONS, JRK_API_KEY, JRK_API_URL, PROFIT_MARGIN
+from app_settings import BRAND_ICONS, JRK_API_KEY, JRK_API_URL, PROFIT_MARGIN
 
 CACHE = {}
+CATALOG_TTL = 300
+FAIL_BACKOFF = 15
+RETRY_AFTER = {}
+CATALOG_LOCK = {"ar": Lock(), "en": Lock()}
 CAT_RULES = {
     "games": ("xbox", "game", "steam", "psn", "pubg", "roblox", "valorant", "playstation", "جيم", "ألعاب", "ببجي"),
     "ai": ("gpt", "gemini", "claude", "midjourney", "perplexity", "grok", "جيميناي", "ذكاء"),
@@ -22,7 +27,7 @@ CAT_RULES = {
 
 def pricing_snapshot():
     markup, overrides = db.pricing_settings()
-    return ((PROFIT_MARGIN - 1) * 100 if markup is None else markup), overrides
+    return ((Decimal(str(PROFIT_MARGIN)) - 1) * 100 if markup is None else markup), overrides
 
 
 def calc_price(cost, product_id=None, quantity=1, pricing=None):
@@ -83,24 +88,33 @@ def detect_category(name):
 
 def load_catalog(lang, force):
     lang = "ar" if lang == "ar" else "en"
-    timestamp, cached = CACHE.get(lang, (0, []))
-    if not force and lang in CACHE and time.monotonic() - timestamp < 300:
-        return cached
+    with CATALOG_LOCK[lang]:
+        timestamp, cached = CACHE.get(lang, (0, []))
+        now = time.monotonic()
+        if not force and (now < RETRY_AFTER.get(lang, 0) or
+                          (lang in CACHE and now - timestamp < CATALOG_TTL)):
+            return cached
+        return fetch_catalog(lang, cached)
 
+
+def fetch_catalog(lang, cached):
     items = []
     seen_offsets = set()
     offset = 0
     while offset not in seen_offsets:
         seen_offsets.add(offset)
-        status, data = jrk_request("GET", f"/products?offset={offset}&limit=100", lang=lang)
+        status, data = jrk_request("GET", f"/products?offset={offset}&limit=100", lang=lang, timeout=(2, 5))
         if status != 200 or not isinstance(data.get("data"), list):
+            RETRY_AFTER[lang] = time.monotonic() + FAIL_BACKOFF
             return cached
         items.extend(dict(product, smart_cat=detect_category(product["name"]), icon=get_icon(product["name"]))
                      for product in data["data"])
         offset = data.get("pagination", {}).get("next_offset")
         if offset is None:
+            RETRY_AFTER.pop(lang, None)
             CACHE[lang] = (time.monotonic(), items)
             return items
+    RETRY_AFTER[lang] = time.monotonic() + FAIL_BACKOFF
     return cached
 
 
@@ -125,7 +139,8 @@ def get_products(lang="en", force=False, include_unavailable=False):
 
 def listing_products(lang="en", force=False):
     """منتجات التصفح: تتضمن غير المتوفر (بزر أحمر) إذا كان الإعداد مفعّلاً. الشراء يبقى محصوراً بالمتوفر."""
-    return get_products(lang, force, include_unavailable=suppliers.show_unavailable())
+    return [product for product in get_products(lang, force, include_unavailable=suppliers.show_unavailable())
+            if not product["shop_meta"].get("hidden")]
 
 
 def get_categories(lang="en"):

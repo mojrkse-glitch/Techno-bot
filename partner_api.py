@@ -18,7 +18,7 @@ def _setting(name, default=""):
     if value:
         return value.strip()
     try:
-        import config
+        import app_settings as config
         return str(getattr(config, name, default) or default).strip()
     except ImportError:
         return default

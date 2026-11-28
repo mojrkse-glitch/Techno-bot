@@ -12,13 +12,16 @@ import checkout
 import commerce_db as store
 import cv_delivery
 import cv_intake
+import cv_pipeline
+import requests
+from io import BytesIO
 import ops_console
 import suppliers
 import suppliers_admin
 import wallet
 import wallet_ui
 import database as db
-from config import ADMIN_ID, LOW_BALANCE_THRESHOLD
+from app_settings import ADMIN_ID, LOW_BALANCE_THRESHOLD
 from locales import t
 
 PAGE_SIZE = 8
@@ -346,7 +349,7 @@ def handle_callback(bot, call, states):
     view = state.copy() if state.get("mode") == "admin" else {"mode": "admin"}
     view.pop("action", None)
     for key, commit in (("wallet_preview", "w_commit"), ("price_preview", "commit_price"), ("op_preview", "opcommit"),
-                        ("cv_file_preview", "cvfilego")):
+                        ("cv_file_preview", "cvfilego"), ("cv_generated_preview", "cvsendpdfgo")):
         if action != commit:
             view.pop(key, None)
     states[uid] = view
@@ -409,6 +412,44 @@ def handle_callback(bot, call, states):
         cv_card(bot, chat_id, msg_id, row, note)
     elif action in {"cvfile", "cvfilere", "cvfileok", "cvfilego"}:
         cv_delivery.callback(sys.modules[__name__], bot, call, view, action, args)
+    elif action in {"cvpdf", "cvsendpdf", "cvsendpdfgo", "cvresume", "cvreconcile", "cvorganized"}:
+        if len(args) != 1 or not args[0].isdigit():
+            return
+        oid = int(args[0])
+        if action == "cvresume":
+            note = "أُعيدت جدولة المعالجة." if cv_pipeline.resume(oid) else "لا توجد مرحلة قابلة للاستئناف."
+        elif action == "cvreconcile":
+            try:
+                found = cv_pipeline.reconcile(oid)
+            except (requests.RequestException, ValueError, KeyError):
+                found = False
+            note = "استُعيد معرّف المهمة." if found else "لم يُستعد معرّف مؤكد. تحقّق في Canva قبل أي إرسال جديد."
+        elif action == "cvorganized":
+            job = cv_pipeline.status(oid)
+            if job and job["organized"]:
+                file = BytesIO(job["organized"].encode())
+                file.name = f"cv_organized_{oid}.json"
+                bot.send_document(chat_id, file)
+            return
+        else:
+            file = cv_pipeline.pdf_file(oid)
+            if not file:
+                return
+            if action == "cvpdf":
+                bot.send_document(chat_id, file)
+                return
+            if action == "cvsendpdf":
+                view["cv_generated_preview"] = oid
+                screen(bot, chat_id, msg_id, f"تأكيد إرسال PDF المراجع للعميل · #{oid}؟",
+                       menu(button("تأكيد الإرسال", f"cvsendpdfgo|{oid}"),
+                            button("⬅️ رجوع", f"opview|{oid}")))
+                return
+            if view.pop("cv_generated_preview", None) != oid:
+                bot.send_message(chat_id, "افتح بطاقة الطلب وأكّد الإرسال مجدداً.")
+                return
+            outcome, _ = cv_delivery.send(bot, oid, uid, file, f"generated-{oid}", file.name)
+            note = cv_delivery.NOTES.get(outcome, "تعذّر الإرسال. راجع حالة التسليم في البطاقة.")
+        ops_console.card(sys.modules[__name__], bot, chat_id, msg_id, oid, note)
     elif action == "cvjson":
         cv_intake.send_json(bot, chat_id, int(args[0]))
     elif action == "sp":

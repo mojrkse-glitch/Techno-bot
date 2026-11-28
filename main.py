@@ -21,7 +21,7 @@ from html import escape
 import telebot
 import urllib3.util.connection as urllib3_connection
 from telebot import types
-from config import (ADMIN_ID, BOT_TOKEN, FORCE_SUB_CHANNEL,
+from app_settings import (ADMIN_ID, BOT_TOKEN, FORCE_SUB_CHANNEL,
                     FORCE_SUB_LINK, JRK_API_KEY, SUPPORT_USERNAME)
 from locales import TEXTS, t
 import database as db
@@ -115,6 +115,53 @@ def cmd_start(message):
         return
     if not deep_open(user,account["lang"]):
         send_main_menu(message.chat.id, user)
+
+
+def language_menu(bot, chat_id, lang, message_id=None):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for code, name in (("ar", "🇸🇾 العربية"), ("en", "🇬🇧 English"), ("vi", "🇻🇳 Tiếng Việt"),
+                       ("hi", "🇮🇳 हिन्दी"), ("fr", "🇫🇷 Français")):
+        markup.add(types.InlineKeyboardButton(name, callback_data=f"setlang_{code}"))
+    markup.add(types.InlineKeyboardButton(t(lang, "btn_back"), callback_data="main"))
+    shop_ui.render(bot, chat_id, message_id, t(lang, "choose_lang"), markup)
+
+
+@bot.message_handler(commands=["help", "language"])
+@user_states.handler
+def customer_command(message):
+    if message.chat.type != "private":
+        return
+    uid = message.from_user.id
+    account = db.get_user(uid)
+    if account["is_banned"]:
+        return
+    user_states.pop(uid, None)
+    lang = account["lang"]
+    command = message.text.split()[0].split("@")[0].lower()
+    if command == "/language":
+        language_menu(bot, uid, lang)
+        return
+    help_text = ("استخدم /start للقائمة و/language لتغيير اللغة. للمساعدة بشأن طلب مدفوع افتح بطاقة الطلب."
+                 if lang == "ar" else
+                 "Use /start for the menu and /language to change language. For help with a paid order, open its order card.")
+    bot.send_message(uid, help_text, reply_markup=shop_ui.menu(
+        shop_ui.button(shop_ui.tr(lang, "stars_orders"), "star_orders|0"),
+        shop_ui.button(t(lang, "btn_back"), "main")))
+
+
+@bot.message_handler(regexp=r"^(?:⬅️ رجوع|⬅️ Back) · #[0-9]{1,18}$")
+@user_states.handler
+def cv_back(message):
+    if message.chat.type != "private":
+        return
+    uid = message.from_user.id
+    account = db.get_user(uid)
+    oid = int(message.text.rsplit("#", 1)[1])
+    row = store.order(oid)
+    if account["is_banned"] or not row or row["user_id"] != uid or row["product_id"] != "cv":
+        return
+    bot.send_message(uid, t(account["lang"], "btn_back"), reply_markup=types.ReplyKeyboardRemove())
+    shop_ui.show_order(bot, uid, None, uid, oid, account["lang"])
 
 
 def deep_open(user,lang):
@@ -265,22 +312,30 @@ def callbacks(call):
         user_states.pop(uid, None)
     u = db.get_user(uid)
     lang = u["lang"]
-    membership = is_subscribed(uid)
-    post_purchase = data in {"purchases", "legacy_orders", "wallet"} or data.startswith(
-        ("star_orders|", "star_order|", "order_help|", "delivery|", "star_delivery|", "w_status|", "w_list|", "cvapp|"))
+    post_purchase = data in {"purchases", "legacy_orders", "wallet", "lang_menu"} or data.startswith(
+        ("star_orders|", "star_order|", "order_help|", "delivery|", "star_delivery|", "w_status|", "w_list|", "cvapp|", "setlang_"))
+    acknowledge_early = data in {"cats", "types", "refresh", "search"} or data.startswith(
+        ("brands|", "cat|", "brand|", "prod|", "buy|", "searchpage|"))
+    if acknowledge_early:
+        bot.answer_callback_query(call.id)
+    membership = True if post_purchase else is_subscribed(uid)
     if membership is None and not post_purchase:
-        bot.answer_callback_query(call.id, shop_ui.tr(lang, "membership_error"), show_alert=True)
+        if acknowledge_early:
+            bot.send_message(uid, shop_ui.tr(lang, "membership_error"))
+        else:
+            bot.answer_callback_query(call.id, shop_ui.tr(lang, "membership_error"), show_alert=True)
         return
     if not membership and not post_purchase:
         if active.get("mode")!="deep": user_states.pop(uid, None)
         if data == "check_sub":
             bot.answer_callback_query(call.id, t(lang, "not_subbed"), show_alert=True)
         else:
-            bot.answer_callback_query(call.id)
+            if not acknowledge_early:
+                bot.answer_callback_query(call.id)
             send_force_sub(call.message.chat.id, lang)
         return
 
-    if data not in {"refresh", "noop"} and not data.startswith(("buy|", "prod|")):
+    if not acknowledge_early and data != "noop":
         bot.answer_callback_query(call.id)
 
     if data=="ds" or data.startswith("ds|"):
@@ -305,27 +360,22 @@ def callbacks(call):
         send_main_menu(call.message.chat.id, call.from_user, call.message.message_id)
 
     elif data == "lang_menu":
-        m = types.InlineKeyboardMarkup(row_width=2)
-        m.add(
-            types.InlineKeyboardButton("🇸🇾 العربية", callback_data="setlang_ar"),
-            types.InlineKeyboardButton("🇬🇧 English", callback_data="setlang_en"),
-            types.InlineKeyboardButton("🇻🇳 Tiếng Việt", callback_data="setlang_vi"),
-            types.InlineKeyboardButton("🇮🇳 हिन्दी", callback_data="setlang_hi"),
-            types.InlineKeyboardButton("🇫🇷 Français", callback_data="setlang_fr")
-        )
-        m.add(types.InlineKeyboardButton(t(lang, "btn_main"), callback_data="main"))
-        bot.edit_message_text(t(lang, "choose_lang"), call.message.chat.id, call.message.message_id, reply_markup=m)
+        language_menu(bot, call.message.chat.id, lang, call.message.message_id)
 
     elif data.startswith("setlang_"):
         new_lang = data.split("_")[1]
         if new_lang not in TEXTS:
             return
         db.set_lang(uid, new_lang)
-        send_main_menu(call.message.chat.id, call.from_user, call.message.message_id)
+        user_states.pop(uid, None)
+        if is_subscribed(uid):
+            send_main_menu(call.message.chat.id, call.from_user, call.message.message_id)
+        else:
+            send_force_sub(uid, new_lang)
 
     elif data == "refresh":
         api.get_products(lang, force=True)
-        bot.answer_callback_query(call.id, t(lang, "refreshed"), show_alert=True)
+        bot.send_message(uid, t(lang, "refreshed"))
 
     elif data == "cats" or re.fullmatch(r"brands\|[0-9]+|cat\|[0-9]+\|[0-9]+", data):
         user_states.pop(uid, None)
@@ -362,11 +412,9 @@ def callbacks(call):
         _, pid, *origin = data.split("|")
         if not origin or origin[0] != "searchpage":
             user_states.pop(uid, None)
-        bot.answer_callback_query(call.id)
         show_product(uid,call.message.message_id,pid,lang,origin)
 
     elif data.startswith("buy|"):
-        bot.answer_callback_query(call.id)
         shop_ui.begin(bot, call.message.chat.id, call.message.message_id, uid, data.split("|", 1)[1], lang, user_states)
 
     elif data.startswith("cvapp|"):
@@ -449,6 +497,12 @@ def callbacks(call):
             lines = []
             for row in orders:
                 if row["kind"] == "cv":
+                    if row["status"] == "migrated":
+                        migrated = store.legacy_cv_order(row["id"], uid)
+                        if migrated:
+                            lines.append(f"📄 #{row['id']} → #{migrated['id']}")
+                            m.add(types.InlineKeyboardButton(f"📄 #{migrated['id']}", callback_data=f"star_order|{migrated['id']}"))
+                            continue
                     status = t(lang, f"cv_status_{row['status']}")
                     lines.append(f"📄 <b>#{row['id']} · {t(lang, 'cv_name')}</b> (${row['sell_price']}) — {status}")
                     if row["status"] in db.CV_OPEN_STATES:
@@ -727,13 +781,23 @@ def send_delivery(chat_id, delivery):
 
 
 def run():
-    if not BOT_TOKEN or not JRK_API_KEY or FORCE_SUB_CHANNEL == "@اسم_قناتك":
+    if not BOT_TOKEN or not JRK_API_KEY or not FORCE_SUB_CHANNEL or FORCE_SUB_CHANNEL == "@اسم_قناتك":
         raise SystemExit("Configure BOT_TOKEN, JRK_API_KEY and FORCE_SUB_CHANNEL in the environment or config.py.")
     urllib3_connection.allowed_gai_family = lambda: socket.AF_INET
     db.init_db()
     store.init()
     import logging
     logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # pyTelegramBotAPI may include credential-bearing request URLs in polling errors.
+    telebot.logger.setLevel(logging.CRITICAL)
+    try:
+        for language, descriptions in [(None, ("Main menu", "Help", "Choose language")),
+                                       ("ar", ("القائمة الرئيسية", "المساعدة", "اختيار اللغة"))]:
+            commands = [types.BotCommand(name, description) for name, description in
+                        zip(("start", "help", "language"), descriptions)]
+            bot.set_my_commands(commands, language_code=language)
+    except (telebot.apihelper.ApiException, OSError):
+        logging.getLogger(__name__).warning("Telegram command registration failed")
     stopped = checkout.worker(bot)
     print("Techo Pay Bot is running...")
     try:

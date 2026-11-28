@@ -149,7 +149,9 @@ def discounted(uid,state,cost):
     import promotions
     pid,qty=state["pid"],state["qty"]
     stars,usd=checkout_prices(pid,qty,cost)
-    base=Decimal("5") if pid=="cv" else (api.calc_price(cost,pid,qty) if cost is not None else None)
+    if pid == "cv":
+        return stars, usd, None
+    base = api.calc_price(cost, pid, qty) if cost is not None else None
     if base is None or base<=0: return stars,usd,None
     cat=state.get("category","")
     sale,adjusted,code=promotions.prices(uid,pid,cat,base,stars,cost)
@@ -168,7 +170,8 @@ def review(bot, chat, msg, uid, lang, state, changed=False):
         markup.add(button(tr(lang, "pay"), f"star_invoice|{token}"))
     if usd is not None:
         markup.add(button(tr(lang, "wallet_pay"), f"wallet_buy|{token}"))
-    markup.add(button("🎟 كوبون / Coupon","x|coupon"))
+    if pid != "cv":
+        markup.add(button("🎟 كوبون / Coupon", "x|coupon"))
     markup.add(button(t(lang, "btn_back"), "ds") if pid == "cv" else button(tr(lang, "edit"), f"buy|{pid}"),
                button(t(lang, "btn_main"), "main"))
     if stars is None and usd is None:
@@ -305,7 +308,7 @@ def show_orders(bot, chat, msg, uid, lang, page):
 
 
 def support_url():
-    from config import SUPPORT_USERNAME
+    from app_settings import SUPPORT_USERNAME
 
     return f"https://t.me/{SUPPORT_USERNAME.lstrip('@')}"
 
@@ -316,7 +319,7 @@ def show_order(bot, chat, msg, uid, oid, lang, support_link=None):
         return
     ticket = store.get_ticket(oid)
     cv_open = row["product_id"] == "cv" and row["state"] in {"cv_details", "cv_work"}
-    waiting_details = cv_open and row["state"] == "cv_details" and not cv_intake.submission(oid)
+    waiting_details = cv_open and row["paid"] is not None and not cv_intake.submission(oid)
     cv_form = waiting_details and bool(cv_intake.webapp_url())
     long_delivery = bool(row["delivery"]) and row["state"] in {"delivered", "partial", "partial_closed"} and len(row["delivery"]) > 1700
     # الإجراء الأهم أولاً، ثم التحديث والطلبات في صف، ثم الدعم زراً واحداً

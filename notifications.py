@@ -9,8 +9,8 @@ import suppliers
 import commerce_db as store
 import cv_intake
 import database as db
-from config import ADMIN_ID
-import config
+from app_settings import ADMIN_ID
+import app_settings as config
 from platform_db import rows, write
 from shop_ui import menu, button, label
 

@@ -29,6 +29,7 @@ TARGET_INPUTS = {"email", "activation_identifier"}
 STOCK_KEYS = ("stock_count", "stock", "available_quantity", "quantity_available", "available_stock", "inventory")
 
 _LOCK = Lock()
+_CATALOG_FETCH = Lock()
 _CACHE = {"at": None, "items": [], "fail_until": 0.0, "version": 0}
 _AUTO = {}
 _AUTO_KEY = [None, {}]
@@ -122,12 +123,17 @@ def partner_items(force=False, settings=None):
     settings = store.settings() if settings is None else settings
     if not partner_enabled(settings):
         return []
+    with _CATALOG_FETCH:
+        return fetch_partner_items(force)
+
+
+def fetch_partner_items(force):
     now = time.monotonic()
     with _LOCK:
         fresh = _CACHE["at"] is not None and now - _CACHE["at"] < CATALOG_TTL
         if not force and (fresh or now < _CACHE["fail_until"]):
             return _CACHE["items"]
-    raw = partner_api.catalog()
+    raw = partner_api.catalog(timeout=(2, 5))
     with _LOCK:
         if raw is None:
             _CACHE["fail_until"] = now + FAIL_BACKOFF
@@ -138,7 +144,7 @@ def partner_items(force=False, settings=None):
 
 
 def reset_cache():
-    with _LOCK:
+    with _CATALOG_FETCH, _LOCK:
         _CACHE.update(at=None, items=[], fail_until=0.0, version=_CACHE["version"] + 1)
         _AUTO.clear()
         _AUTO_KEY[:] = [None, {}]
